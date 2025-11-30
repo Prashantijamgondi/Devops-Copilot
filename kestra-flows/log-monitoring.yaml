@@ -1,0 +1,69 @@
+id: log-monitoring
+namespace: devops.copilot
+
+description: Continuous log monitoring for error detection
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "*/5 * * * *"  # Every 5 minutes
+
+tasks:
+  # Fetch recent logs from all services
+  - id: fetch_logs
+    type: io.kestra.plugin.core.http.Request
+    uri: "https://logging-service.example.com/api/logs"
+    method: POST
+    body: |
+      {
+        "timeRange": "last_5m",
+        "level": "error"
+      }
+  
+  # Parse and detect patterns
+  - id: detect_errors
+    type: io.kestra.plugin.scripts.python.Script
+    script: |
+      import json
+      
+      logs = json.loads("""{{ outputs.fetch_logs.body }}""")
+      
+      error_counts = {}
+      for log in logs.get('entries', []):
+          service = log.get('service', 'unknown')
+          error_counts[service] = error_counts.get(service, 0) + 1
+      
+      # Detect services with high error rates
+      incidents = []
+      for service, count in error_counts.items():
+          if count > 10:  # Threshold
+              incidents.append({
+                  'service': service,
+                  'error_count': count,
+                  'severity': 'high' if count > 50 else 'medium'
+              })
+      
+      print(json.dumps({'incidents': incidents}))
+  
+  # Create incidents for detected issues
+  - id: create_incidents
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ outputs.detect_errors.vars.incidents }}"
+    tasks:
+      - id: send_webhook
+        type: io.kestra.plugin.core.http.Request
+        uri: "https://your-backend.render.com/api/v1/webhooks/incident"
+        method: POST
+        headers:
+          X-Webhook-Signature: "{{ secret('WEBHOOK_SECRET') }}"
+        body: |
+          {
+            "title": "High error rate detected in {{ taskrun.value.service }}",
+            "service": "{{ taskrun.value.service }}",
+            "error_type": "high_error_rate",
+            "severity": "{{ taskrun.value.severity }}",
+            "metadata": {
+              "error_count": {{ taskrun.value.error_count }},
+              "detection_source": "kestra_monitoring"
+            }
+          }

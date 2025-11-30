@@ -1,0 +1,106 @@
+id: alerting-workflow
+namespace: devops.copilot
+
+description: Send alerts for critical incidents
+
+inputs:
+  - name: incident_id
+    type: INT
+    required: true
+  
+  - name: severity
+    type: STRING
+    required: true
+  
+  - name: title
+    type: STRING
+    required: true
+  
+  - name: service_name
+    type: STRING
+    required: true
+
+tasks:
+  # Determine alert channels based on severity
+  - id: determine_channels
+    type: io.kestra.plugin.core.flow.Switch
+    value: "{{ inputs.severity }}"
+    cases:
+      critical:
+        - id: send_pagerduty
+          type: io.kestra.plugin.core.http.Request
+          uri: "https://events.pagerduty.com/v2/enqueue"
+          method: POST
+          headers:
+            Content-Type: "application/json"
+          body: |
+            {
+              "routing_key": "{{ secret('PAGERDUTY_KEY') }}",
+              "event_action": "trigger",
+              "payload": {
+                "summary": "{{ inputs.title }}",
+                "severity": "critical",
+                "source": "{{ inputs.service_name }}",
+                "custom_details": {
+                  "incident_id": {{ inputs.incident_id }}
+                }
+              }
+            }
+        
+        - id: send_slack_critical
+          type: io.kestra.plugin.notifications.slack.SlackIncomingWebhook
+          url: "{{ secret('SLACK_WEBHOOK_URL') }}"
+          payload: |
+            {
+              "text": "🚨 CRITICAL INCIDENT",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "🚨 Critical Incident #{{ inputs.incident_id }}"
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*{{ inputs.title }}*\n\nService: {{ inputs.service_name }}"
+                  }
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View Details"
+                      },
+                      "url": "https://your-dashboard.vercel.app/incidents/{{ inputs.incident_id }}"
+                    }
+                  ]
+                }
+              ]
+            }
+      
+      high:
+        - id: send_slack_high
+          type: io.kestra.plugin.notifications.slack.SlackIncomingWebhook
+          url: "{{ secret('SLACK_WEBHOOK_URL') }}"
+          payload: |
+            {
+              "text": "⚠️ High Priority Incident #{{ inputs.incident_id }}: {{ inputs.title }}"
+            }
+      
+      medium:
+        - id: send_email
+          type: io.kestra.plugin.notifications.mail.MailSend
+          from: "devops@example.com"
+          to: ["oncall@example.com"]
+          subject: "Incident #{{ inputs.incident_id }}: {{ inputs.title }}"
+          htmlTextContent: |
+            <h2>Incident Detected</h2>
+            <p><strong>Service:</strong> {{ inputs.service_name }}</p>
+            <p><strong>Severity:</strong> {{ inputs.severity }}</p>
+            <p><a href="https://your-dashboard.vercel.app/incidents/{{ inputs.incident_id }}">View Details</a></p>

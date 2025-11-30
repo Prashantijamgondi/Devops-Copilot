@@ -1,0 +1,143 @@
+id: incident-resolution
+namespace: devops.copilot
+
+description: Automated incident resolution workflow
+
+inputs:
+  - name: incident_id
+    type: INT
+    required: true
+  
+  - name: service_name
+    type: STRING
+    required: true
+  
+  - name: resolution_steps
+    type: JSON
+    required: true
+  
+  - name: severity
+    type: STRING
+    required: true
+
+tasks:
+  # Step 1: Check service health
+  - id: check_health
+    type: io.kestra.plugin.core.http.Request
+    uri: "https://{{ inputs.service_name }}.example.com/health"
+    method: GET
+    
+  # Step 2: Analyze logs
+  - id: fetch_logs
+    type: io.kestra.plugin.core.http.Request
+    uri: "https://logging-service.example.com/api/logs"
+    method: POST
+    body: |
+      {
+        "service": "{{ inputs.service_name }}",
+        "timeRange": "last_1h",
+        "level": "error"
+      }
+  
+  # Step 3: Determine action based on severity
+  - id: determine_action
+    type: io.kestra.plugin.core.flow.Switch
+    value: "{{ inputs.severity }}"
+    cases:
+      critical:
+        - id: trigger_rollback
+          type: io.kestra.plugin.core.http.Request
+          uri: "https://deployment-service.example.com/api/rollback"
+          method: POST
+          body: |
+            {
+              "service": "{{ inputs.service_name }}",
+              "version": "previous"
+            }
+        
+        - id: scale_up
+          type: io.kestra.plugin.core.http.Request
+          uri: "https://orchestrator.example.com/api/scale"
+          method: POST
+          body: |
+            {
+              "service": "{{ inputs.service_name }}",
+              "replicas": 5
+            }
+      
+      high:
+        - id: apply_config_fix
+          type: io.kestra.plugin.core.http.Request
+          uri: "https://config-service.example.com/api/update"
+          method: POST
+          body: |
+            {
+              "service": "{{ inputs.service_name }}",
+              "config": {{ inputs.resolution_steps }}
+            }
+      
+      medium:
+        - id: restart_service
+          type: io.kestra.plugin.core.http.Request
+          uri: "https://orchestrator.example.com/api/restart"
+          method: POST
+          body: |
+            {
+              "service": "{{ inputs.service_name }}"
+            }
+  
+  # Step 4: Verify resolution
+  - id: verify_resolution
+    type: io.kestra.plugin.core.http.Request
+    uri: "https://{{ inputs.service_name }}.example.com/health"
+    method: GET
+    retry:
+      maxAttempt: 5
+      interval: PT30S
+  
+  # Step 5: Update incident status
+  - id: update_incident
+    type: io.kestra.plugin.core.http.Request
+    uri: "https://your-backend.render.com/api/v1/incidents/{{ inputs.incident_id }}/status"
+    method: PUT
+    body: |
+      {
+        "status": "resolved",
+        "resolution_verified": {{ outputs.verify_resolution.code == 200 }}
+      }
+  
+  # Step 6: Send notification
+  - id: send_notification
+    type: io.kestra.plugin.notifications.slack.SlackIncomingWebhook
+    url: "{{ secret('SLACK_WEBHOOK_URL') }}"
+    payload: |
+      {
+        "text": "✅ Incident #{{ inputs.incident_id }} resolved",
+        "blocks": [
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*Incident Resolved*\n• Service: {{ inputs.service_name }}\n• Severity: {{ inputs.severity }}\n• Duration: {{ duration }}"
+            }
+          }
+        ]
+      }
+
+errors:
+  - id: handle_failure
+    type: io.kestra.plugin.notifications.slack.SlackIncomingWebhook
+    url: "{{ secret('SLACK_WEBHOOK_URL') }}"
+    payload: |
+      {
+        "text": "❌ Failed to resolve incident #{{ inputs.incident_id }}",
+        "blocks": [
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*Resolution Failed*\n• Service: {{ inputs.service_name }}\n• Error: {{ error.message }}\n• Manual intervention required"
+            }
+          }
+        ]
+      }
