@@ -1,0 +1,215 @@
+# version: '3.8'
+
+# services:
+#   postgres:
+#     image: postgres:15-alpine
+#     container_name: devops-copilot-db
+#     environment:
+#       POSTGRES_DB: devops_copilot
+#       POSTGRES_USER: devops_user
+#       POSTGRES_PASSWORD: devops_pass
+#     ports:
+#       - "5432:5432"
+#     volumes:
+#       - postgres_data:/var/lib/postgresql/data
+#     healthcheck:
+#       test: ["CMD-SHELL", "pg_isready -U devops_user"]
+#       interval: 10s
+#       timeout: 5s
+#       retries: 5
+
+#   redis:
+#     image: redis:7-alpine
+#     container_name: devops-copilot-redis
+#     ports:
+#       - "6379:6379"
+#     volumes:
+#       - redis_data:/data
+#     healthcheck:
+#       test: ["CMD", "redis-cli", "ping"]
+#       interval: 10s
+#       timeout: 5s
+#       retries: 5
+
+#   backend:
+#     build: ./backend
+#     container_name: devops-copilot-api
+#     ports:
+#       - "8000:8000"
+#     environment:
+#       DATABASE_URL: postgresql://devops_user:devops_pass@postgres:5432/devops_copilot
+#       REDIS_URL: redis://redis:6379
+#       TOGETHER_API_KEY: ${TOGETHER_API_KEY}
+#       KESTRA_URL: ${KESTRA_URL}
+#       KESTRA_API_KEY: ${KESTRA_API_KEY}
+#       SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
+#       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-your-webhook-secret}
+#       SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+#     depends_on:
+#       postgres:
+#         condition: service_healthy
+#       redis:
+#         condition: service_healthy
+#     volumes:
+#       - ./backend:/app
+#     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+#   frontend:
+#     build: ./frontend
+#     container_name: devops-copilot-ui
+#     ports:
+#       - "3000:3000"
+#     environment:
+#       NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+#       NEXT_PUBLIC_WS_URL: ws://localhost:8000/ws
+#     depends_on:
+#       - backend
+#     volumes:
+#       - ./frontend:/app
+#       - /app/node_modules
+#       - /app/.next
+#     command: npm run dev
+
+# volumes:
+#   postgres_data:
+#   redis_data:
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: devops-copilot-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: devops-copilot-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # kestra:
+  #   image: kestra/kestra:latest
+  #   container_name: devops-copilot-kestra
+  #   ports:
+  #     - "8080:8080"
+  #   environment:
+  #     KESTRA_CONFIGURATION: |
+  #       datasources:
+  #         postgres:
+  #           url: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+  #           driverClassName: org.postgresql.Driver
+  #           username: ${POSTGRES_USER}
+  #           password: ${POSTGRES_PASSWORD}
+  #       kestra:
+  #         server:
+  #           basic-auth:
+  #             enabled: false
+  #         repository:
+  #           type: postgres
+  #         storage:
+  #           type: local
+  #           local:
+  #             base-path: /app/storage
+  #         queue:
+  #           type: postgres
+  #         tasks:
+  #           tmp-dir:
+  #             path: /tmp/kestra-wd/tmp
+  #   volumes:
+  #     - kestra_data:/app/storage
+  #     - kestra_tmp:/tmp/kestra-wd
+  #     - ./kestra-flows:/app/flows
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   command: server standalone
+  kestra:
+    image: kestra/kestra:latest
+    container_name: devops-copilot-kestra
+    pull_policy: always
+    user: "root" # ← IMPORTANT: Needed for Docker socket access
+    command: server standalone
+    ports:
+      - "8080:8080"
+    volumes:
+      - kestra_data:/app/storage
+      - /var/run/docker.sock:/var/run/docker.sock # ← IMPORTANT
+      - /tmp/kestra-wd:/tmp/kestra-wd # ← IMPORTANT
+    environment:
+      KESTRA_CONFIGURATION: |
+        datasources:
+          postgres:
+            url: jdbc:postgresql://devops-copilot-db:5432/store_db
+            driverClassName: org.postgresql.Driver
+            username: postgres
+            password: postgres
+        kestra:
+          server:
+            basic-auth:
+              enabled: false
+          repository:
+            type: postgres
+          storage:
+            type: local
+            local:
+              base-path: /app/storage
+          queue:
+            type: postgres
+          tasks:
+            tmp-dir:
+              path: /tmp/kestra-wd/tmp
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend:
+    build: ./backend
+    container_name: devops-copilot-api
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      AI_PROVIDER: ${AI_PROVIDER}
+      KESTRA_URL: http://kestra:8080
+      KESTRA_API_KEY: ${KESTRA_API_KEY}
+      SECRET_KEY: ${SECRET_KEY}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kestra:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+volumes:
+  postgres_data:
+  redis_data:
+  kestra_data:
+  kestra_tmp:
+
+

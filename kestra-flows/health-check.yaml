@@ -1,0 +1,71 @@
+id: health-check-monitoring
+namespace: devops.copilot
+
+description: Continuous health checking for all services
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "*/2 * * * *"  # Every 2 minutes
+
+tasks:
+  - id: check_all_services
+    type: io.kestra.plugin.core.flow.Parallel
+    tasks:
+      - id: check_api_gateway
+        type: io.kestra.plugin.core.http.Request
+        uri: "https://api-gateway.example.com/health"
+        method: GET
+        
+      - id: check_user_service
+        type: io.kestra.plugin.core.http.Request
+        uri: "https://user-service.example.com/health"
+        method: GET
+        
+      - id: check_payment_service
+        type: io.kestra.plugin.core.http.Request
+        uri: "https://payment-service.example.com/health"
+        method: GET
+  
+  - id: evaluate_health
+    type: io.kestra.plugin.scripts.python.Script
+    script: |
+      import json
+      
+      failures = []
+      
+      # Check each service response
+      if {{ outputs.check_api_gateway.code }} != 200:
+          failures.append('api-gateway')
+      if {{ outputs.check_user_service.code }} != 200:
+          failures.append('user-service')
+      if {{ outputs.check_payment_service.code }} != 200:
+          failures.append('payment-service')
+      
+      if failures:
+          print(json.dumps({'failed_services': failures}))
+      else:
+          print(json.dumps({'status': 'all_healthy'}))
+  
+  - id: create_incidents_if_needed
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs.evaluate_health.vars.failed_services is defined }}"
+    then:
+      - id: notify_failures
+        type: io.kestra.plugin.core.flow.ForEach
+        values: "{{ outputs.evaluate_health.vars.failed_services }}"
+        tasks:
+          - id: create_incident
+            type: io.kestra.plugin.core.http.Request
+            uri: "https://your-backend.render.com/api/v1/webhooks/incident"
+            method: POST
+            headers:
+              X-Webhook-Signature: "{{ secret('WEBHOOK_SECRET') }}"
+            body: |
+              {
+                "title": "Health check failed for {{ taskrun.value }}",
+                "service": "{{ taskrun.value }}",
+                "error_type": "health_check_failure",
+                "severity": "high",
+                "description": "Service not responding to health checks"
+              }
