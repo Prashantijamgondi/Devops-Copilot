@@ -1,15 +1,11 @@
-FROM python:3.11-slim
+FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install dependencies
-COPY requirements.txt .
+COPY backend/requirements.txt .
+
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application
-COPY . .
+COPY backend .
 
-# Run migrations, seed data, then start server
-CMD alembic upgrade head && \
-    python scripts/seed_data.py && \
-    uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
