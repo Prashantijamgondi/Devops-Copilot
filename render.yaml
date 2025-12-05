@@ -27,4 +27,4 @@ services:
       - key: SLACK_WEBHOOK_URL
         sync: false
       - key: ALLOWED_ORIGINS
-        sync: false
+        value: https://devops-copilot-7501y7swo-prashants-projects-e70afb18.vercel.app

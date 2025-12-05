@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
+    # CORS
+    ALLOWED_ORIGINS: str = "*"
+    
     # Monitoring
     WEBHOOK_SECRET: str
     SLACK_WEBHOOK_URL: str = ""
